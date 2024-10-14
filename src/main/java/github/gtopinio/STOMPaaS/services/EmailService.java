@@ -33,6 +33,8 @@ public class EmailService {
                 return ResponseFactory.createBadRequestResponse("Invalid email input");
             }
 
+            log.info("Email Details: {}", emailDTO.getSenderEmail());
+
             MimeMessage mimeMessage = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, true);
 

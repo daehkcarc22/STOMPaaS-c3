@@ -206,6 +206,8 @@ public class SocketSessionMapper {
                     socketSessionEntry.setSocketUserList(socketUserList);
                     this.socketSessionMapping.put(socketRoomId, socketSessionEntry);
 
+                    this.cleanUpSocketRoom(socketRoomId);
+
                     return SocketMappingResponse.builder()
                             .socketRoomId(socketRoomId)
                             .socketRoomCount(socketUserList.size())
@@ -213,8 +215,6 @@ public class SocketSessionMapper {
                             .build();
                 }
             }
-
-            this.cleanUpSocketRoom(socketRoomId);
         }
         return SocketMappingResponse.builder()
                 .socketRoomId(null)
@@ -227,6 +227,7 @@ public class SocketSessionMapper {
         if (this.doesSocketRoomExist(socketRoomId)) {
             SocketSessionEntry socketSessionEntry = this.socketSessionMapping.get(socketRoomId);
             if (socketSessionEntry.getSocketUserList().isEmpty()) {
+                log.info("Socket room removed: {}", socketRoomId);
                 this.socketSessionMapping.remove(socketRoomId);
             }
         }

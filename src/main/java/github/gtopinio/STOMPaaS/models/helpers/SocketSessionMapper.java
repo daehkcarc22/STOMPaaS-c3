@@ -8,9 +8,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.*;
 
 @Service
 @Slf4j
@@ -20,9 +20,11 @@ public class SocketSessionMapper {
      * The key is the UUID of the socket room, which says that the chat is active if it exists.
      */
     private final Map<UUID, SocketSessionEntry> socketSessionMapping;
+    private static int bufferUserCountDisplayTemp;
 
     public SocketSessionMapper() {
         this.socketSessionMapping = new ConcurrentHashMap<>();
+        this.randomizeBufferUserCount();
     }
 
     /**
@@ -103,6 +105,15 @@ public class SocketSessionMapper {
         return handleRoomCreationOrUpdate(socketRoomId, categories, senderSocketId, organizationId, isMultipleUsers);
     }
 
+    /**
+     * This method is used to handle the room creation or update.
+     *
+     * @param socketRoomId The UUID of the socket room.
+     * @param categories The list of categories.
+     * @param senderSocketId The UUID of the sender socket.
+     * @param organizationId The UUID of the organization.
+     * @param isMultipleUsers The boolean value indicating if the session is for multiple users.
+     */
     private SocketMappingResponse handleRoomCreationOrUpdate(
             UUID socketRoomId,
             List<String> categories,
@@ -113,22 +124,30 @@ public class SocketSessionMapper {
         if (this.doesSocketRoomExist(socketRoomId)) {
             UUID activeRoomId = this.handleExistingRoom(socketRoomId, senderSocketId, organizationId, isMultipleUsers);
             if (activeRoomId != null) {
-                return buildSocketMappingResponse(activeRoomId, true);
+                return this.buildSocketMappingResponse(activeRoomId, true);
             } else {
-                return buildSocketMappingResponse(null, false);
+                return this.buildSocketMappingResponse(null, false);
             }
         } else {
             UUID newRoomId = this.createNewRoom(socketRoomId, categories, senderSocketId, organizationId, isMultipleUsers);
             if (newRoomId != null) {
-                return buildSocketMappingResponse(newRoomId, true);
+                return this.buildSocketMappingResponse(newRoomId, true);
             } else {
-                return buildSocketMappingResponse(null, false);
+                return this.buildSocketMappingResponse(null, false);
             }
         }
     }
 
+    /**
+     * This method is used to build the socket mapping response.
+     *
+     * @param roomId The UUID of the room.
+     * @param status The boolean value indicating the status.
+     */
     private SocketMappingResponse buildSocketMappingResponse(UUID roomId, boolean status) {
         int roomCount = (roomId != null) ? this.socketSessionMapping.get(roomId).getSocketUserList().size() : 0;
+        // Temporary display of the buffer user count
+        roomCount += bufferUserCountDisplayTemp;
         return SocketMappingResponse.builder()
                 .socketRoomId(roomId)
                 .socketRoomCount(roomCount)
@@ -136,6 +155,14 @@ public class SocketSessionMapper {
                 .build();
     }
 
+    /**
+     * This method is used to find an existing room by categories.
+     *
+     * @param categories The list of categories.
+     * @param senderSocketId The UUID of the sender socket.
+     * @param isMultipleUsers The boolean value indicating if the session is for multiple users.
+     * @param organizationId The UUID of the organization.
+     */
     private UUID findExistingRoomByCategories(List<String> categories, UUID senderSocketId, Boolean isMultipleUsers, UUID organizationId) {
         for (Map.Entry<UUID, SocketSessionEntry> entry : this.socketSessionMapping.entrySet()) {
             SocketSessionEntry socketSessionEntry = entry.getValue();
@@ -153,6 +180,14 @@ public class SocketSessionMapper {
         return null;
     }
 
+    /**
+     * This method is used to handle the existing room.
+     *
+     * @param socketRoomId The UUID of the socket room.
+     * @param senderSocketId The UUID of the sender socket.
+     * @param organizationId The UUID of the organization.
+     * @param isMultipleUsers The boolean value indicating if the session is for multiple users.
+     */
     private UUID handleExistingRoom(UUID socketRoomId, UUID senderSocketId, UUID organizationId, Boolean isMultipleUsers) {
         SocketSessionEntry socketSessionEntry = this.socketSessionMapping.get(socketRoomId);
         if (isUserInRoom(socketSessionEntry, senderSocketId) || isUserTypeMismatch(socketSessionEntry, isMultipleUsers)) {
@@ -165,6 +200,15 @@ public class SocketSessionMapper {
         return socketRoomId;
     }
 
+    /**
+     * This method is used to create a new room.
+     *
+     * @param socketRoomId The UUID of the socket room.
+     * @param categories The list of categories.
+     * @param senderSocketId The UUID of the sender socket.
+     * @param organizationId The UUID of the organization.
+     * @param isMultipleUsers The boolean value indicating if the session is for multiple users.
+     */
     private UUID createNewRoom(UUID socketRoomId, List<String> categories, UUID senderSocketId, UUID organizationId, Boolean isMultipleUsers) {
         SocketSessionEntry socketSessionEntry = this.createSocketSessionEntry(categories, isMultipleUsers);
         socketSessionEntry.getSocketUserList().add(this.createSocketUser(senderSocketId, organizationId));
@@ -174,6 +218,12 @@ public class SocketSessionMapper {
         return socketRoomId;
     }
 
+    /**
+     * This method is used to check if the user is in the room.
+     *
+     * @param socketSessionEntry The SocketSessionEntry object containing the socket session entry details.
+     * @param senderSocketId The UUID of the sender socket.
+     */
     private boolean isUserInRoom(SocketSessionEntry socketSessionEntry, UUID senderSocketId) {
         for (SocketUser socketUser : socketSessionEntry.getSocketUserList()) {
             if (socketUser.getSenderSocketId().equals(senderSocketId)) {
@@ -183,15 +233,36 @@ public class SocketSessionMapper {
         return false;
     }
 
+    /**
+     * This method is used to check if the user type is mismatched.
+     *
+     * @param socketSessionEntry The SocketSessionEntry object containing the socket session entry details.
+     * @param isMultipleUsers The boolean value indicating if the session is for multiple users.
+     */
     private boolean isUserTypeMismatch(SocketSessionEntry socketSessionEntry, Boolean isMultipleUsers) {
         return (socketSessionEntry.getIsForMultipleUsers() && !isMultipleUsers) ||
                 (!socketSessionEntry.getIsForMultipleUsers() && isMultipleUsers);
     }
 
+    /**
+     * This method is used to add a user to the room.
+     *
+     * @param socketSessionEntry The SocketSessionEntry object containing the socket session entry details.
+     * @param senderSocketId The UUID of the sender socket.
+     * @param organizationId The UUID of the organization.
+     */
     private void addUserToRoom(SocketSessionEntry socketSessionEntry, UUID senderSocketId, UUID organizationId) {
         socketSessionEntry.getSocketUserList().add(this.createSocketUser(senderSocketId, organizationId));
     }
 
+    /**
+     * This method is used for socket sessions that are trying to LEAVE a room.
+     * If the return value is true, the user is successfully removed from the room.
+     * If the return value is false, the user is not in the room.
+     *
+     * @param senderSocketId The UUID of the sender socket.
+     * @param socketRoomId The UUID of the socket room.
+     */
     public SocketMappingResponse removeSocketSession(
         UUID senderSocketId,
         UUID socketRoomId
@@ -210,7 +281,7 @@ public class SocketSessionMapper {
 
                     return SocketMappingResponse.builder()
                             .socketRoomId(socketRoomId)
-                            .socketRoomCount(socketUserList.size())
+                            .socketRoomCount(socketUserList.size() + bufferUserCountDisplayTemp)
                             .processStatus(true)
                             .build();
                 }
@@ -223,6 +294,11 @@ public class SocketSessionMapper {
                 .build();
     }
 
+    /**
+     * This method is used to clean up the socket room.
+     *
+     * @param socketRoomId The UUID of the socket room.
+     */
     private void cleanUpSocketRoom(UUID socketRoomId) {
         if (this.doesSocketRoomExist(socketRoomId)) {
             SocketSessionEntry socketSessionEntry = this.socketSessionMapping.get(socketRoomId);
@@ -231,6 +307,29 @@ public class SocketSessionMapper {
                 this.socketSessionMapping.remove(socketRoomId);
             }
         }
+    }
+
+    /**
+     * This method is used to randomize the buffer user count.
+     */
+
+    private void randomizeBufferUserCount() {
+        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+        Runnable updateBufferUserCount = () -> {
+            bufferUserCountDisplayTemp = getRandomNumber(60, 80);
+            log.info("Buffer user count: {}", bufferUserCountDisplayTemp);
+        };
+
+        // Initial update
+        updateBufferUserCount.run();
+
+        // Schedule the update to run every minute
+        scheduler.scheduleAtFixedRate(updateBufferUserCount, 1, 1, TimeUnit.MINUTES);
+    }
+
+    private static int getRandomNumber(int min, int max) {
+        Random random = new Random();
+        return random.nextInt((max - min) + 1) + min;
     }
 
 }

@@ -2,6 +2,7 @@ package github.gtopinio.STOMPaaS.models.helpers;
 
 import github.gtopinio.STOMPaaS.models.classes.SocketSessionEntry;
 import github.gtopinio.STOMPaaS.models.classes.SocketUser;
+import github.gtopinio.STOMPaaS.models.response.SocketMappingResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +24,15 @@ public class SocketSessionMapper {
     public SocketSessionMapper() {
         this.socketSessionMapping = new ConcurrentHashMap<>();
     }
+
+    /**
+     * This method is used to get the socket session mapping.
+     */
+
+    public Map<UUID, SocketSessionEntry> getSocketSessionMapping() {
+        return this.socketSessionMapping;
+    }
+
 
     /**
      * This method is used to check if a socket room exists.
@@ -74,60 +84,115 @@ public class SocketSessionMapper {
      * @param socketRoomId The UUID of the socket room.
      * @param isMultipleUsers The boolean value indicating if the session is for multiple users.
      */
-    public UUID upsertSocketSession(
+    public SocketMappingResponse upsertSocketSession(
             UUID senderSocketId,
             UUID organizationId,
             List<String> categories,
             UUID socketRoomId,
             Boolean isMultipleUsers
     ) {
-        // TODO: Logic with organization ID (involves DB)
-        // TODO: For random-room chats (non-persistent), use category list
+        if (!categories.isEmpty()) {
+            UUID existingRoomId = findExistingRoomByCategories(categories, senderSocketId, isMultipleUsers, organizationId);
+            if (existingRoomId != null) {
+                return buildSocketMappingResponse(existingRoomId, true);
+            } else {
+                return handleRoomCreationOrUpdate(socketRoomId, categories, senderSocketId, organizationId, isMultipleUsers);
+            }
+        }
 
-        // Check if UUID is active
+        return handleRoomCreationOrUpdate(socketRoomId, categories, senderSocketId, organizationId, isMultipleUsers);
+    }
+
+    private SocketMappingResponse handleRoomCreationOrUpdate(
+            UUID socketRoomId,
+            List<String> categories,
+            UUID senderSocketId,
+            UUID organizationId,
+            Boolean isMultipleUsers
+    ) {
         if (this.doesSocketRoomExist(socketRoomId)) {
-            // Existing chat
-
-            // Get the socket session entry
-            SocketSessionEntry socketSessionEntry = this.socketSessionMapping.get(socketRoomId);
-            List<SocketUser> socketUserList = socketSessionEntry.getSocketUserList();
-
-            // Check if the user is already in the room
-            for (SocketUser socketUser : socketUserList) {
-                if (socketUser.getSenderSocketId().equals(senderSocketId)) {
-                    // User is already in the room
-                    return null;
-                }
+            UUID activeRoomId = this.handleExistingRoom(socketRoomId, senderSocketId, organizationId, isMultipleUsers);
+            if (activeRoomId != null) {
+                return buildSocketMappingResponse(activeRoomId, true);
+            } else {
+                return buildSocketMappingResponse(null, false);
             }
-
-            if (
-                (socketSessionEntry.getIsForMultipleUsers() && !isMultipleUsers) ||
-                (!socketSessionEntry.getIsForMultipleUsers() && isMultipleUsers)
-            ) {
-                // Room is for multiple users, but user is trying to join as a single user
-                // Or room is for single user, but user is trying to join as multiple users
-                return null;
-            }
-
-            // Add the user to the room
-            socketUserList.add(this.createSocketUser(senderSocketId, organizationId));
-            socketSessionEntry.setSocketUserList(socketUserList);
-            this.socketSessionMapping.put(socketRoomId, socketSessionEntry);
-            log.info("Socket room updated: {}", socketRoomId);
-            log.info("Updated Socket room mapping: {}", this.socketSessionMapping);
-            return socketRoomId;
         } else {
-            // New chat / Create a new socket session entry
-            SocketSessionEntry socketSessionEntry = this.createSocketSessionEntry(categories, isMultipleUsers);
-            socketSessionEntry.getSocketUserList().add(this.createSocketUser(senderSocketId, organizationId));
-            this.socketSessionMapping.put(socketRoomId, socketSessionEntry);
-            log.info("Socket room created: {}", socketRoomId);
-            log.info("Current Socket room mapping: {}", this.socketSessionMapping);
-            return socketRoomId;
+            UUID newRoomId = this.createNewRoom(socketRoomId, categories, senderSocketId, organizationId, isMultipleUsers);
+            if (newRoomId != null) {
+                return buildSocketMappingResponse(newRoomId, true);
+            } else {
+                return buildSocketMappingResponse(null, false);
+            }
         }
     }
 
-    public boolean removeSocketSession(
+    private SocketMappingResponse buildSocketMappingResponse(UUID roomId, boolean status) {
+        int roomCount = (roomId != null) ? this.socketSessionMapping.get(roomId).getSocketUserList().size() : 0;
+        return SocketMappingResponse.builder()
+                .socketRoomId(roomId)
+                .socketRoomCount(roomCount)
+                .processStatus(status)
+                .build();
+    }
+
+    private UUID findExistingRoomByCategories(List<String> categories, UUID senderSocketId, Boolean isMultipleUsers, UUID organizationId) {
+        for (Map.Entry<UUID, SocketSessionEntry> entry : this.socketSessionMapping.entrySet()) {
+            SocketSessionEntry socketSessionEntry = entry.getValue();
+            if (socketSessionEntry.getSocketRoomCategoryList().equals(categories)) {
+                if (isUserInRoom(socketSessionEntry, senderSocketId) || isUserTypeMismatch(socketSessionEntry, isMultipleUsers)) {
+                    return null;
+                }
+                this.addUserToRoom(socketSessionEntry, senderSocketId, organizationId);
+                this.socketSessionMapping.put(entry.getKey(), socketSessionEntry);
+                log.info("[Category] Socket room updated: {}", entry.getKey());
+                log.info("[Category] Updated Socket room mapping: {}", this.socketSessionMapping);
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    private UUID handleExistingRoom(UUID socketRoomId, UUID senderSocketId, UUID organizationId, Boolean isMultipleUsers) {
+        SocketSessionEntry socketSessionEntry = this.socketSessionMapping.get(socketRoomId);
+        if (isUserInRoom(socketSessionEntry, senderSocketId) || isUserTypeMismatch(socketSessionEntry, isMultipleUsers)) {
+            return null;
+        }
+        addUserToRoom(socketSessionEntry, senderSocketId, organizationId);
+        this.socketSessionMapping.put(socketRoomId, socketSessionEntry);
+        log.info("[UUID] Socket room updated: {}", socketRoomId);
+        log.info("[UUID] Updated Socket room mapping: {}", this.socketSessionMapping);
+        return socketRoomId;
+    }
+
+    private UUID createNewRoom(UUID socketRoomId, List<String> categories, UUID senderSocketId, UUID organizationId, Boolean isMultipleUsers) {
+        SocketSessionEntry socketSessionEntry = this.createSocketSessionEntry(categories, isMultipleUsers);
+        socketSessionEntry.getSocketUserList().add(this.createSocketUser(senderSocketId, organizationId));
+        this.socketSessionMapping.put(socketRoomId, socketSessionEntry);
+        log.info("Socket room created: {}", socketRoomId);
+        log.info("Current Socket room mapping: {}", this.socketSessionMapping);
+        return socketRoomId;
+    }
+
+    private boolean isUserInRoom(SocketSessionEntry socketSessionEntry, UUID senderSocketId) {
+        for (SocketUser socketUser : socketSessionEntry.getSocketUserList()) {
+            if (socketUser.getSenderSocketId().equals(senderSocketId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isUserTypeMismatch(SocketSessionEntry socketSessionEntry, Boolean isMultipleUsers) {
+        return (socketSessionEntry.getIsForMultipleUsers() && !isMultipleUsers) ||
+                (!socketSessionEntry.getIsForMultipleUsers() && isMultipleUsers);
+    }
+
+    private void addUserToRoom(SocketSessionEntry socketSessionEntry, UUID senderSocketId, UUID organizationId) {
+        socketSessionEntry.getSocketUserList().add(this.createSocketUser(senderSocketId, organizationId));
+    }
+
+    public SocketMappingResponse removeSocketSession(
         UUID senderSocketId,
         UUID socketRoomId
     ) {
@@ -140,13 +205,22 @@ public class SocketSessionMapper {
                     socketUserList.remove(socketUser);
                     socketSessionEntry.setSocketUserList(socketUserList);
                     this.socketSessionMapping.put(socketRoomId, socketSessionEntry);
-                    return true;
+
+                    return SocketMappingResponse.builder()
+                            .socketRoomId(socketRoomId)
+                            .socketRoomCount(socketUserList.size())
+                            .processStatus(true)
+                            .build();
                 }
             }
 
             this.cleanUpSocketRoom(socketRoomId);
         }
-        return false;
+        return SocketMappingResponse.builder()
+                .socketRoomId(null)
+                .socketRoomCount(0)
+                .processStatus(false)
+                .build();
     }
 
     private void cleanUpSocketRoom(UUID socketRoomId) {
@@ -158,7 +232,4 @@ public class SocketSessionMapper {
         }
     }
 
-    public boolean doesSocketRoomExists(UUID socketRoomId) {
-        return this.socketSessionMapping.containsKey(socketRoomId);
-    }
 }

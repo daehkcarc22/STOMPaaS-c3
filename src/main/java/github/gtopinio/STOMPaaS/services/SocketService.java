@@ -7,6 +7,7 @@ import github.gtopinio.STOMPaaS.models.enums.UserType;
 import github.gtopinio.STOMPaaS.models.factories.SocketSessionResponseFactory;
 import github.gtopinio.STOMPaaS.models.helpers.SocketInputValidator;
 import github.gtopinio.STOMPaaS.models.helpers.SocketSessionMapper;
+import github.gtopinio.STOMPaaS.models.response.SocketMappingResponse;
 import github.gtopinio.STOMPaaS.models.response.SocketSessionResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.Payload;
@@ -56,7 +57,7 @@ public class SocketService {
             return SocketSessionResponseFactory.createBadRequestResponse(null, "Invalid message type when linking socket session");
         }
 
-        UUID responseID = this.socketSessionMapper.upsertSocketSession(
+        SocketMappingResponse upsertSocketSessionResponse = this.socketSessionMapper.upsertSocketSession(
             input.getSenderSocketId(),
             input.getOrganizationId(),
             input.getCategories(),
@@ -64,22 +65,24 @@ public class SocketService {
             input.getIsForMultipleUsers()
         );
 
-        if (responseID == null) {
+        if (upsertSocketSessionResponse == null || !upsertSocketSessionResponse.isProcessStatus()) {
             log.error("Linking socket session failed: Response ID is null");
             return SocketSessionResponseFactory.createErrorResponse(null, "Error linking socket session");
         }
 
+        // This is a message to be sent to the socket room by the system
         var responseMessage = SocketMessage.builder()
                 .content("User " + input.getSenderUsername() + " has joined the chat")
                 .senderUsername(UserType.SYSTEM.toString())
                 .senderSocketId(null)
                 .type(MessageType.JOIN)
+                .socketRoomCount(upsertSocketSessionResponse.getSocketRoomCount())
                 .build();
 
         this.handleJoinMessage(headerAccessor, input.getSenderSocketId(), input.getSocketRoomId(), responseMessage);
 
         log.info("Linking socket session successful");
-        return SocketSessionResponseFactory.createSuccessResponse(responseID, "Socket session linked successfully");
+        return SocketSessionResponseFactory.createSuccessResponse(input.getSocketRoomId(), "Socket session linked successfully");
     }
 
     /**
@@ -107,17 +110,21 @@ public class SocketService {
         UUID socketRoomId = UUID.fromString(socketRoomIdObj.toString());
         UUID senderSocketId = UUID.fromString(senderSocketIdObj.toString());
 
-        if (this.socketSessionMapper.removeSocketSession(senderSocketId, socketRoomId)) {
+        var removeSocketSessionResponse = this.socketSessionMapper.removeSocketSession(senderSocketId, socketRoomId);
+
+        if (removeSocketSessionResponse != null && removeSocketSessionResponse.isProcessStatus()) {
             var responseMessage = SocketMessage.builder()
                     .content("User has left the chat")
                     .senderUsername(UserType.SYSTEM.toString())
                     .senderSocketId(null)
                     .socketRoomId(socketRoomId)
                     .type(MessageType.LEAVE)
+                    .socketRoomCount(removeSocketSessionResponse.getSocketRoomCount())
                     .build();
 
             this.broadcastMessage(socketRoomId, responseMessage);
             log.info("Unlinking socket session successful");
+            log.info("Current socket room mapping: {}", this.socketSessionMapper.getSocketSessionMapping());
             return SocketSessionResponseFactory.createSuccessResponse(null, "Socket session unlinked successfully");
         }
 

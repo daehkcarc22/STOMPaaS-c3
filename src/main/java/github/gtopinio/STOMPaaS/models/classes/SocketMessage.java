@@ -17,4 +17,5 @@ public class SocketMessage {
     private UUID senderSocketId;
     private UUID socketRoomId;
     private MessageType type;
+    private Integer socketRoomCount;
 }

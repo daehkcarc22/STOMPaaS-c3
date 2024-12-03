@@ -21,6 +21,9 @@ public class SocketSessionMapper {
      */
     private final Map<UUID, SocketSessionEntry> socketSessionMapping;
     private static int bufferUserCountDisplayTemp;
+    private static int bufferDecrementTemp;
+    private static int exIncHubGamingRoomCount;
+    private static int exIncHubMainRoomCount;
 
     public SocketSessionMapper() {
         this.socketSessionMapping = new ConcurrentHashMap<>();
@@ -146,13 +149,27 @@ public class SocketSessionMapper {
      */
     private SocketMappingResponse buildSocketMappingResponse(UUID roomId, boolean status) {
         int roomCount = (roomId != null) ? this.socketSessionMapping.get(roomId).getSocketUserList().size() : 0;
-        // Temporary display of the buffer user count
-        roomCount += bufferUserCountDisplayTemp;
-        return SocketMappingResponse.builder()
-                .socketRoomId(roomId)
-                .socketRoomCount(roomCount)
-                .processStatus(status)
-                .build();
+        // Special Case for ExIncHub (tell the user how many people are in the main room and the number of people in the gaming room)
+        exIncHubGamingRoomCount = this.socketSessionMapping.containsKey(UUID.fromString("e615ee39-c350-4f50-ba2c-baf6b30900e7")) ? this.socketSessionMapping.get(UUID.fromString("e615ee39-c350-4f50-ba2c-baf6b30900e7")).getSocketUserList().size() : 0;
+        if (roomId != null && roomId.equals(UUID.fromString("e615ee39-c350-4f50-ba2c-baf6b30900e7"))) {
+            exIncHubMainRoomCount = this.socketSessionMapping.containsKey(UUID.fromString("91c4b664-1bfd-4311-b7fd-e52e63658f46")) ? this.socketSessionMapping.get(UUID.fromString("91c4b664-1bfd-4311-b7fd-e52e63658f46")).getSocketUserList().size() : 0;
+            roomCount = exIncHubMainRoomCount + bufferUserCountDisplayTemp;
+
+            return SocketMappingResponse.builder()
+                    .socketRoomId(roomId)
+                    .socketRoomCount(roomCount)
+                    .processStatus(status)
+                    .exIncHubGamingRoomCount(exIncHubGamingRoomCount + (bufferUserCountDisplayTemp - bufferDecrementTemp))
+                    .build();
+        } else {
+            roomCount += bufferUserCountDisplayTemp;
+            return SocketMappingResponse.builder()
+                    .socketRoomId(roomId)
+                    .socketRoomCount(roomCount)
+                    .processStatus(status)
+                    .exIncHubGamingRoomCount(exIncHubGamingRoomCount + (bufferUserCountDisplayTemp - bufferDecrementTemp))
+                    .build();
+        }
     }
 
     /**
@@ -279,10 +296,23 @@ public class SocketSessionMapper {
 
                     this.cleanUpSocketRoom(socketRoomId);
 
+                    // This logic section is for ExIncHub telling the main room to update the count for both online user count and games count
+                    exIncHubGamingRoomCount = this.socketSessionMapping.containsKey(UUID.fromString("e615ee39-c350-4f50-ba2c-baf6b30900e7")) ? this.socketSessionMapping.get(UUID.fromString("e615ee39-c350-4f50-ba2c-baf6b30900e7")).getSocketUserList().size() : 0;
+                    if (socketRoomId != null && socketRoomId.equals(UUID.fromString("e615ee39-c350-4f50-ba2c-baf6b30900e7"))) {
+                        exIncHubMainRoomCount = this.socketSessionMapping.containsKey(UUID.fromString("91c4b664-1bfd-4311-b7fd-e52e63658f46")) ? this.socketSessionMapping.get(UUID.fromString("91c4b664-1bfd-4311-b7fd-e52e63658f46")).getSocketUserList().size() : 0;
+                        return SocketMappingResponse.builder()
+                                .socketRoomId(socketRoomId)
+                                .socketRoomCount(exIncHubMainRoomCount + bufferUserCountDisplayTemp)
+                                .processStatus(true)
+                                .exIncHubGamingRoomCount(exIncHubGamingRoomCount + (bufferUserCountDisplayTemp - bufferDecrementTemp))
+                                .build();
+                    }
+
                     return SocketMappingResponse.builder()
                             .socketRoomId(socketRoomId)
                             .socketRoomCount(socketUserList.size() + bufferUserCountDisplayTemp)
                             .processStatus(true)
+                            .exIncHubGamingRoomCount(exIncHubGamingRoomCount + (bufferUserCountDisplayTemp - bufferDecrementTemp))
                             .build();
                 }
             }
@@ -317,7 +347,9 @@ public class SocketSessionMapper {
         ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
         Runnable updateBufferUserCount = () -> {
             bufferUserCountDisplayTemp = getRandomNumber(60, 80);
+            bufferDecrementTemp = getRandomNumber(10, 15); // The range must not be out of bounds of the buffer user count
             log.info("Buffer user count: {}", bufferUserCountDisplayTemp);
+            log.info("Buffer decrement: {}", bufferDecrementTemp);
         };
 
         // Initial update

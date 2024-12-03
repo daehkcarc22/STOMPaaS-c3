@@ -77,9 +77,24 @@ public class SocketService {
                 .senderSocketId(null)
                 .type(MessageType.JOIN)
                 .socketRoomCount(upsertSocketSessionResponse.getSocketRoomCount())
+                .exIncHubGamingRoomCount(upsertSocketSessionResponse.getExIncHubGamingRoomCount())
                 .build();
 
         this.handleJoinMessage(headerAccessor, input.getSenderSocketId(), input.getSocketRoomId(), responseMessage);
+
+        // This is telling the ExIncHubMainRoom that a new game has started, and it needs to update its count for both online users and games
+        if (input.getSocketRoomId().equals(UUID.fromString("e615ee39-c350-4f50-ba2c-baf6b30900e7"))) {
+            var pingMessageToExIncHubGamingRoom = SocketMessage.builder()
+                    .content("New game instantiated")
+                    .senderUsername(UserType.SYSTEM.toString())
+                    .senderSocketId(null)
+                    .socketRoomId(input.getSocketRoomId())
+                    .type(MessageType.JOIN)
+                    .socketRoomCount(upsertSocketSessionResponse.getSocketRoomCount())
+                    .exIncHubGamingRoomCount(upsertSocketSessionResponse.getExIncHubGamingRoomCount())
+                    .build();
+            this.broadcastMessage(UUID.fromString("91c4b664-1bfd-4311-b7fd-e52e63658f46"), pingMessageToExIncHubGamingRoom);
+        }
 
         log.info("Linking socket session successful");
         return SocketSessionResponseFactory.createSuccessResponse(input.getSocketRoomId(), "Socket session linked successfully");
@@ -120,11 +135,26 @@ public class SocketService {
                     .socketRoomId(socketRoomId)
                     .type(MessageType.LEAVE)
                     .socketRoomCount(removeSocketSessionResponse.getSocketRoomCount())
+                    .exIncHubGamingRoomCount(removeSocketSessionResponse.getExIncHubGamingRoomCount())
                     .build();
 
             this.broadcastMessage(socketRoomId, responseMessage);
             log.info("Unlinking socket session successful");
             log.info("Current socket room mapping: {}", this.socketSessionMapper.getSocketSessionMapping());
+
+            // This is telling the ExIncHubMainRoom that a game has ended, and it needs to update its count for both online users and games
+            if (removeSocketSessionResponse.getSocketRoomId().equals(UUID.fromString("e615ee39-c350-4f50-ba2c-baf6b30900e7"))) {
+                var pingMessageToExIncHubGamingRoom = SocketMessage.builder()
+                        .content("Game left by player")
+                        .senderUsername(UserType.SYSTEM.toString())
+                        .senderSocketId(null)
+                        .socketRoomId(removeSocketSessionResponse.getSocketRoomId())
+                        .type(MessageType.LEAVE)
+                        .socketRoomCount(removeSocketSessionResponse.getSocketRoomCount())
+                        .exIncHubGamingRoomCount(removeSocketSessionResponse.getExIncHubGamingRoomCount())
+                        .build();
+                this.broadcastMessage(UUID.fromString("91c4b664-1bfd-4311-b7fd-e52e63658f46"), pingMessageToExIncHubGamingRoom);
+            }
             return SocketSessionResponseFactory.createSuccessResponse(null, "Socket session unlinked successfully");
         }
 

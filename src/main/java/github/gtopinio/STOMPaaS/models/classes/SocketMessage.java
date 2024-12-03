@@ -18,4 +18,5 @@ public class SocketMessage {
     private UUID socketRoomId;
     private MessageType type;
     private Integer socketRoomCount;
+    private Integer exIncHubGamingRoomCount;
 }

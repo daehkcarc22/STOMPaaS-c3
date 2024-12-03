@@ -15,4 +15,6 @@ public class SocketMappingResponse {
     private UUID socketRoomId;
     private Integer socketRoomCount;
     private boolean processStatus;
+    private Integer exIncHubGamingRoomCount;
+    private Integer exIncHubMainRoomCount;
 }
